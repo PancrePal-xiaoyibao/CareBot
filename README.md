@@ -28,7 +28,7 @@ cp .env.example .env
 2. 编辑 `.env`
 
 - 填入 `OPENAI_API_KEY`
-- 如果你接的是兼容端点，填入 `OPENAI_BASE_URL`
+- 如果你接的是兼容端点，填入 `OPENAI_BASE_URL`，记得最后/v1/结尾
 - 如果兼容端点使用自定义模型名，覆盖 `CARE_CHAT_MODEL`
 - 对 Kimi 兼容网关，优先使用 `CARE_CHAT_OPENAI_API=chat_completions`
 - 如果想在 CLI 里展示 Kimi 的思考流，保持 `CARE_CHAT_ENABLE_THINKING=true`
