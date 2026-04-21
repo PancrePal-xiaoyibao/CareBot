@@ -49,9 +49,9 @@ async def _print_streaming_reply(
                 if last_kind is not None:
                     print()
                 label = (
-                    "Thinking"
+                    "思考中"
                     if chunk.kind == "reasoning"
-                    else "Care"
+                    else "小馨宝"
                 )
                 print(f"{label}> ", end="", flush=True)
                 last_kind = chunk.kind
@@ -62,9 +62,9 @@ async def _print_streaming_reply(
             if last_kind is not None:
                 console.print()
             label = (
-                "Thinking"
+                "思考中"
                 if chunk.kind == "reasoning"
-                else "Care"
+                else "小馨宝"
             )
             style = (
                 "dim cyan"
@@ -86,10 +86,20 @@ async def _print_streaming_reply(
     else:
         console.print()
 
+WELCOME_TEXT = (
+    "您好，我是小馨宝，小胰宝社区的心理支持智能体。\n\n"
+    "我们的一切对话将受到社区条款的保护，对话内容不会被包括社区管理者在内的任何第三方知晓，"
+    "请您放心沟通。\n\n"
+    "心理支持是癌症综合治疗中的一个重要环节，您今天选择来到这里，"
+    "这种面对困境的勇气本身就值得肯定。\n"
+    "作为您的专属陪伴者，我理解癌症带来的不仅是身体上的挑战，更是心灵的考验。\n"
+    "请把您当下的感受直接告诉我，等您准备好了我们就开始。"
+)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Care Chat: a cancer-support companion built with the OpenAI Agents SDK.",
+        description="Care Chat（小馨宝）：基于 OpenAI Agents SDK 的肿瘤心理支持智能体。",
     )
     parser.add_argument(
         "message",
@@ -210,7 +220,7 @@ def main() -> None:
                     if args.plain:
                         print(reply)
                     else:
-                        console.print(Panel(reply, title="Care", border_style="green"))
+                        console.print(Panel(reply, title="小馨宝", border_style="green"))
             except Exception as exc:
                 if args.plain:
                     print(f"运行失败: {exc}", file=sys.stderr)
@@ -221,9 +231,12 @@ def main() -> None:
 
         if args.plain:
             print(
-                f"Care Chat ready. session={args.session_id} model={settings.care_chat_model} stream={str(args.stream).lower()} role={resolved_role_hint}\n"
-                "输入 exit、quit 或 Ctrl+C 结束。"
+                f"Care Chat（小馨宝）已就绪\n"
+                f"session={args.session_id} model={settings.care_chat_model} "
+                f"stream={str(args.stream).lower()} role={resolved_role_hint}\n"
             )
+            print(WELCOME_TEXT)
+            print("\n输入 exit、quit 或 Ctrl+C 结束。")
             if tracing_warning:
                 print(f"[tracing-warning] {tracing_warning}")
         else:
@@ -236,12 +249,16 @@ def main() -> None:
             )
             console.print(
                 Panel.fit(
-                    f"[bold]Care Chat[/bold]\nsession=[cyan]{args.session_id}[/cyan]\n"
+                    f"[bold]Care Chat（小馨宝）[/bold]\n"
+                    f"session=[cyan]{args.session_id}[/cyan]\n"
                     f"model=[magenta]{settings.care_chat_model}[/magenta]\n{features}\n"
                     "输入 exit、quit 或 Ctrl+C 结束。",
                     border_style="blue",
                 )
             )
+            console.print()
+            console.print(Panel(WELCOME_TEXT, title="小馨宝", border_style="green"))
+            console.print()
             if tracing_warning:
                 console.print(
                     Panel.fit(tracing_warning, title="Tracing Warning", border_style="yellow")
@@ -286,16 +303,16 @@ def main() -> None:
                 reply = service.reply(user_input, role_hint=resolved_role_hint)
             except Exception as exc:
                 if args.plain:
-                    print(f"Care> 运行失败: {exc}\n")
+                    print(f"小馨宝> 运行失败: {exc}\n")
                 else:
                     console.print(Panel.fit(str(exc), title="运行失败", border_style="red"))
                     console.print()
                 continue
 
             if args.plain:
-                print(f"Care> {reply}\n")
+                print(f"小馨宝> {reply}\n")
             else:
-                console.print(Panel(reply, title="Care", border_style="green"))
+                console.print(Panel(reply, title="小馨宝", border_style="green"))
                 console.print()
     finally:
         try:

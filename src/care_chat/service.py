@@ -27,7 +27,7 @@ from openai.types.responses import ResponseTextDeltaEvent
 from .agents import build_care_agent, build_run_config, configure_openai_runtime
 from .config import Settings
 from .mcp import CareChatMCPRegistry, build_mcp_registry
-from .safety import build_guardrail_response, build_output_block_response, detect_local_crisis
+from .safety import build_guardrail_response, build_output_block_response, build_prompt_injection_response, detect_local_crisis, detect_prompt_injection
 from .schemas import CareChatContext, CareRoleHint, InputSafetyAssessment
 
 
@@ -186,6 +186,10 @@ class CareChatService:
         text = message.strip()
         if not text:
             raise ValueError("Message cannot be empty.")
+
+        injection_alert = detect_prompt_injection(text)
+        if injection_alert:
+            return text, build_prompt_injection_response()
 
         local_alert = detect_local_crisis(text)
         if local_alert:

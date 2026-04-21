@@ -8,6 +8,7 @@ import re
 class SafetyCategory(StrEnum):
     MEDICAL_EMERGENCY = "medical_emergency"
     SELF_HARM = "self_harm"
+    PROMPT_INJECTION = "prompt_injection"
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,10 @@ SELF_HARM_PATTERNS = (
     r"结束生命",
     r"伤害自己",
     r"自我伤害",
+    r"活着没意思",
+    r"不如死了",
+    r"想去死",
+    r"了结自己",
     r"kill myself",
     r"end my life",
     r"hurt myself",
@@ -50,6 +55,24 @@ MEDICAL_EMERGENCY_PATTERNS = (
     r"bleeding heavily",
 )
 
+PROMPT_INJECTION_PATTERNS = (
+    r"系统提示词",
+    r"初始指令",
+    r"系统设定",
+    r"你的提示词",
+    r"你的prompt",
+    r"你的指令",
+    r"扮演角色",
+    r"忽略之前的指令",
+    r"忽略上面的",
+    r"忽略所有指令",
+    r"system\s*prompt",
+    r"ignore\s*(previous|above|all)\s*(instructions?|prompts?)",
+    r"reveal\s*(your|the)\s*(prompt|instructions?)",
+    r"what\s*are\s*your\s*instructions",
+    r"repeat\s*(your|the)\s*(system|initial)\s*(prompt|message)",
+)
+
 
 def _collect_matches(message: str, patterns: tuple[str, ...]) -> tuple[str, ...]:
     lowered = message.lower()
@@ -58,6 +81,16 @@ def _collect_matches(message: str, patterns: tuple[str, ...]) -> tuple[str, ...]
         if re.search(pattern, lowered, flags=re.IGNORECASE):
             matches.append(pattern)
     return tuple(matches)
+
+
+def detect_prompt_injection(message: str) -> SafetyAlert | None:
+    matches = _collect_matches(message, PROMPT_INJECTION_PATTERNS)
+    if matches:
+        return SafetyAlert(
+            category=SafetyCategory.PROMPT_INJECTION,
+            matched_terms=matches,
+        )
+    return None
 
 
 def detect_local_crisis(message: str) -> SafetyAlert | None:
@@ -78,6 +111,10 @@ def detect_local_crisis(message: str) -> SafetyAlert | None:
     return None
 
 
+def build_prompt_injection_response() -> str:
+    return "我的工作方式属于内部信息，无法透露。如果您有其他心理支持方面的需求，我很乐意帮助您。"
+
+
 def build_guardrail_response(
     category: str,
     language: str = "zh-CN",
@@ -87,15 +124,21 @@ def build_guardrail_response(
     if normalized.startswith("zh"):
         if category == SafetyCategory.SELF_HARM.value:
             return (
-                "我现在更担心你的即时安全。请立刻联系身边可信任的人陪你，不要一个人待着。"
-                "如果你在美国，请现在拨打或短信联系 988；如果你有立刻伤害自己的风险，请直接拨打 911 "
-                "或去最近的急诊。若你不在美国，请马上联系当地急救电话或危机干预热线。"
+                "我现在更担心你的即时安全。请立刻联系身边可信任的人陪你，不要一个人待着。\n\n"
+                "以下是可以立即联系的危机干预资源：\n"
+                "- 全国心理援助热线：400-161-9995\n"
+                "- 北京心理危机研究与干预中心：010-82951332\n"
+                "- 全国24小时心理危机干预热线：12320-5\n"
+                "- 生命热线：400-821-1215\n"
+                "- 希望24热线：400-161-9995\n\n"
+                "如果你有立刻伤害自己的风险，请直接拨打 120 或去最近的急诊。"
             )
 
         return (
-            "这听起来可能涉及紧急情况，我不能替代线下医疗判断。"
-            "如果你现在有呼吸困难、胸痛、抽搐、叫不醒、大量出血或意识改变，请立即拨打急救电话"
-            "或前往最近的急诊；如果你在美国，请拨打 911。若你正在接受肿瘤治疗，也请尽快联系你的肿瘤科团队。"
+            "这听起来可能涉及紧急情况，我不能替代线下医疗判断。\n"
+            "如果你现在有呼吸困难、胸痛、抽搐、叫不醒、大量出血或意识改变，"
+            "请立即拨打 120 或前往最近的急诊。\n"
+            "如果你正在接受肿瘤治疗，也请尽快联系你的肿瘤科团队。"
         )
 
     if category == SafetyCategory.SELF_HARM.value:

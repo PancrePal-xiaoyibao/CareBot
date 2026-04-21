@@ -107,7 +107,7 @@ def test_sub_agents_have_expected_tools() -> None:
     patient_emotional = patient.handoffs[0]
     patient_navigation = patient.handoffs[1]
     patient_urgent = patient.handoffs[2]
-    assert [t.name for t in patient_emotional.tools] == ["grounding_exercise"]
+    assert [t.name for t in patient_emotional.tools] == ["grounding_exercise", "community_peer_referral"]
     assert [t.name for t in patient_navigation.tools] == [
         "doctor_question_builder",
         "symptom_journal_template",

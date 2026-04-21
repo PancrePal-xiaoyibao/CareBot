@@ -66,6 +66,7 @@ from .schemas import (
 from .tools import (
     caregiver_coordination_plan,
     community_help_request,
+    community_peer_referral,
     doctor_question_builder,
     grounding_exercise,
     symptom_journal_template,
@@ -395,7 +396,7 @@ def build_care_agent(
             "and emotional containment."
         ),
         instructions=patient_emotional_support_prompt(),
-        tools=[grounding_exercise],
+        tools=[grounding_exercise, community_peer_referral],
         **shared_agent_config,
         **_agent_kwargs(PATIENT_EMOTIONAL_AGENT_KEY),
     )
@@ -431,7 +432,7 @@ def build_care_agent(
             "Best for caregiver burnout, strain, guilt, and emotional support."
         ),
         instructions=caregiver_emotional_support_prompt(),
-        tools=[grounding_exercise],
+        tools=[grounding_exercise, community_peer_referral],
         **shared_agent_config,
         **_agent_kwargs(CAREGIVER_EMOTIONAL_AGENT_KEY),
     )

@@ -5,7 +5,7 @@ from agents import function_tool
 
 @function_tool
 def grounding_exercise(feeling: str) -> str:
-    """Return a short grounding exercise for distress, panic, or overwhelm."""
+    """当用户恐慌、情绪泛滥或无法平静时，返回一个 90 秒的落地练习。"""
     return (
         f"当前情绪焦点: {feeling}\n"
         "建议先做一个 90 秒的落地练习：\n"
@@ -19,7 +19,7 @@ def grounding_exercise(feeling: str) -> str:
 
 @function_tool
 def doctor_question_builder(topic: str, current_symptoms: str | None = None) -> str:
-    """Build a concise list of questions the user can ask their care team."""
+    """为用户构建一份简明的就诊问题清单。"""
     symptom_line = current_symptoms or "暂无补充症状"
     return (
         f"就诊主题: {topic}\n"
@@ -35,7 +35,7 @@ def doctor_question_builder(topic: str, current_symptoms: str | None = None) -> 
 
 @function_tool
 def symptom_journal_template(focus: str) -> str:
-    """Return a structured symptom log template for the next clinician contact."""
+    """返回一个结构化的症状记录模板，方便下次就诊使用。"""
     return (
         f"症状记录模板: {focus}\n"
         "- 开始时间:\n"
@@ -55,7 +55,7 @@ def urgent_support_playbook(
     on_active_treatment: bool = True,
     temperature_c: float | None = None,
 ) -> str:
-    """Return a conservative escalation checklist for concerning symptoms."""
+    """为令人担忧的症状返回保守的升级清单。"""
     treatment_line = "正在接受治疗" if on_active_treatment else "当前不确定是否正在治疗"
     temperature_line = f"{temperature_c}C" if temperature_c is not None else "未提供"
     return (
@@ -71,7 +71,7 @@ def urgent_support_playbook(
 
 @function_tool
 def caregiver_coordination_plan(primary_need: str, next_24_hours: str | None = None) -> str:
-    """Create a caregiver-facing coordination checklist for the next day or shift."""
+    """为照护者创建接下来一天或一个班次的协调清单。"""
     timing = next_24_hours or "接下来 24 小时"
     return (
         f"照护重点: {primary_need}\n"
@@ -87,7 +87,7 @@ def caregiver_coordination_plan(primary_need: str, next_24_hours: str | None = N
 
 @function_tool
 def community_help_request(need: str, timeframe: str | None = None) -> str:
-    """Draft a short practical help request for friends, family, or volunteers."""
+    """起草一条简短的实际帮助请求消息，发给朋友、家人或志愿者。"""
     window = timeframe or "这几天"
     return (
         f"需要支持的事项: {need}\n"
@@ -101,7 +101,7 @@ def community_help_request(need: str, timeframe: str | None = None) -> str:
 
 @function_tool
 def volunteer_support_boundaries(task: str, observed_concern: str | None = None) -> str:
-    """Return a safe support checklist for a community volunteer."""
+    """为社区志愿者返回安全支持清单。"""
     concern = observed_concern or "暂无额外异常"
     return (
         f"志愿服务任务: {task}\n"
@@ -112,4 +112,20 @@ def volunteer_support_boundaries(task: str, observed_concern: str | None = None)
         "3. 如果你看到高热、呼吸困难、明显意识变化、反复呕吐或快速恶化，立刻联系家属或医疗团队。\n"
         "4. 只共享获得允许的必要信息，避免在群里扩散病情细节。\n"
         "5. 结束服务前，留下一条简短交接: 你做了什么、看到了什么、谁接手。"
+    )
+
+
+@function_tool
+def community_peer_referral(user_expression: str) -> str:
+    """当用户表达孤独感或渴望病友交流时，生成社群连接引导信息。"""
+    return (
+        f"用户表达: {user_expression}\n\n"
+        "社群连接引导:\n"
+        "我们的「小胰宝」社区是一个温暖的大家庭，汇聚了很多和您一样勇敢的朋友。\n"
+        "在那里，许多朋友分享经验、互相打气，您不会感到孤单。\n\n"
+        "如果您愿意，可以添加我们社区小助手「小胰宝助手」的微信。\n"
+        "添加时请备注「来自小馨宝的推荐」，我们的同事会尽快邀请您进入最适合您的互助群。\n\n"
+        "您也可以通过以下链接与小馨宝匿名聊天：\n"
+        "https://admin.xiaoyibao.com.cn/chat/share?shareId=mbROsS6udQNKEUfJgYmjiybe\n\n"
+        "请先记下这个方式，不用着急。我们可以随时回到我们的谈话中来。"
     )
