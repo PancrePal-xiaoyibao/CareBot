@@ -32,6 +32,8 @@ def test_guardrail_response_mentions_chinese_hotlines_for_self_harm() -> None:
     assert "120" in response
     assert "400-161-9995" in response
     assert "010-82951332" in response
+    assert "我听到你了" in response
+    assert "我会一直在这里" in response
 
 
 def test_guardrail_response_mentions_988_for_english_self_harm() -> None:

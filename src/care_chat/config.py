@@ -138,6 +138,34 @@ class Settings(BaseSettings):
         default="zh-CN",
         validation_alias="CARE_CHAT_LANGUAGE",
     )
+    care_chat_crisis_alert_enabled: bool = Field(
+        default=False,
+        validation_alias="CARE_CHAT_CRISIS_ALERT_ENABLED",
+    )
+    care_chat_crisis_alert_smtp_host: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_CRISIS_ALERT_SMTP_HOST",
+    )
+    care_chat_crisis_alert_smtp_port: int = Field(
+        default=465,
+        validation_alias="CARE_CHAT_CRISIS_ALERT_SMTP_PORT",
+    )
+    care_chat_crisis_alert_smtp_user: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_CRISIS_ALERT_SMTP_USER",
+    )
+    care_chat_crisis_alert_smtp_password: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_CRISIS_ALERT_SMTP_PASSWORD",
+    )
+    care_chat_crisis_alert_recipient: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_CRISIS_ALERT_RECIPIENT",
+    )
+    care_chat_crisis_alert_cooldown_minutes: int = Field(
+        default=10,
+        validation_alias="CARE_CHAT_CRISIS_ALERT_COOLDOWN_MINUTES",
+    )
 
     @field_validator("care_chat_session_history_limit", mode="before")
     @classmethod
@@ -247,6 +275,7 @@ class Settings(BaseSettings):
             "mcp_convert_schemas_to_strict": (
                 str(self.care_chat_mcp_convert_schemas_to_strict).lower()
             ),
+            "crisis_alert_enabled": str(self.care_chat_crisis_alert_enabled).lower(),
             "api_key_configured": "yes" if bool(self.openai_api_key.strip()) else "no",
         }
 

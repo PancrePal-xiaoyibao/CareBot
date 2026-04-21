@@ -150,3 +150,38 @@ def test_build_run_config_uses_official_tracing_fields() -> None:
     assert run_config.tracing == {"api_key": "trace-key"}
     assert run_config.group_id == "session-123"
     assert run_config.trace_metadata == {"role_hint": "patient"}
+
+
+def test_crisis_tool_injected_when_enabled() -> None:
+    settings = Settings(
+        _env_file=None,
+        openai_api_key="test-key",
+        care_chat_session_db_path=Path("tmp/test.sqlite3"),
+        care_chat_crisis_alert_enabled=True,
+        care_chat_crisis_alert_smtp_host="smtp.example.com",
+        care_chat_crisis_alert_smtp_user="a@b.com",
+        care_chat_crisis_alert_smtp_password="pw",
+        care_chat_crisis_alert_recipient="admin@b.com",
+    )
+
+    agent = build_care_agent(settings)
+
+    patient = agent.handoffs[0]
+    patient_emotional = patient.handoffs[0]
+    patient_urgent = patient.handoffs[2]
+
+    assert "crisis_alert_notification" in [t.name for t in patient_emotional.tools]
+    assert "crisis_alert_notification" in [t.name for t in patient_urgent.tools]
+
+    caregiver = agent.handoffs[1]
+    caregiver_emotional = caregiver.handoffs[0]
+    caregiver_urgent = caregiver.handoffs[2]
+    assert "crisis_alert_notification" in [t.name for t in caregiver_emotional.tools]
+    assert "crisis_alert_notification" in [t.name for t in caregiver_urgent.tools]
+
+    volunteer = agent.handoffs[2]
+    volunteer_escalation = volunteer.handoffs[2]
+    assert "crisis_alert_notification" in [t.name for t in volunteer_escalation.tools]
+
+    patient_navigation = patient.handoffs[1]
+    assert "crisis_alert_notification" not in [t.name for t in patient_navigation.tools]

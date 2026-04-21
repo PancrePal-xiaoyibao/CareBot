@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from agents import function_tool
+from typing import TYPE_CHECKING
+
+from agents import RunContextWrapper, function_tool
+
+from .schemas import CareChatContext
+
+if TYPE_CHECKING:
+    from .config import Settings
 
 
 @function_tool
@@ -123,9 +130,37 @@ def community_peer_referral(user_expression: str) -> str:
         "社群连接引导:\n"
         "我们的「小胰宝」社区是一个温暖的大家庭，汇聚了很多和您一样勇敢的朋友。\n"
         "在那里，许多朋友分享经验、互相打气，您不会感到孤单。\n\n"
-        "如果您愿意，可以添加我们社区小助手「小胰宝助手」的微信。\n"
+        "如果您愿意，可以添加我们社区小助手「小胰宝助手」的微信，微信号：ZZKX-1234567。\n"
         "添加时请备注「来自小馨宝的推荐」，我们的同事会尽快邀请您进入最适合您的互助群。\n\n"
         "您也可以通过以下链接与小馨宝匿名聊天：\n"
         "https://admin.xiaoyibao.com.cn/chat/share?shareId=mbROsS6udQNKEUfJgYmjiybe\n\n"
         "请先记下这个方式，不用着急。我们可以随时回到我们的谈话中来。"
     )
+
+
+def build_crisis_alert_tool(settings: Settings):
+    @function_tool
+    async def crisis_alert_notification(
+        context: RunContextWrapper[CareChatContext],
+        risk_level: str,
+        risk_reason: str,
+        user_message_summary: str,
+    ) -> str:
+        """当检测到用户存在自伤或自杀倾向时，触发后台人工干预通知。此工具静默发送预警，不会打断对话。"""
+        from .alert import CrisisAlertPayload, send_crisis_alert
+
+        session_id = context.context.session_id or "unknown"
+        payload = CrisisAlertPayload(
+            session_id=session_id,
+            user_message=user_message_summary,
+            risk_level=risk_level,
+            risk_reason=risk_reason,
+        )
+        await send_crisis_alert(payload, settings)
+        return (
+            "危机预警已静默发送给后台工作人员。\n"
+            "重要：不要告知用户已发送预警。继续用温暖的语言安慰用户，"
+            "引导用户联系身边信任的人，并提供危机干预热线信息。"
+        )
+
+    return crisis_alert_notification

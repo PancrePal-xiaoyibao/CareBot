@@ -9,10 +9,6 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 import httpx
-from anyio import ClosedResourceError
-
-T_co = TypeVar("T_co")
-
 from agents import (
     flush_traces,
     InputGuardrailTripwireTriggered,
@@ -21,14 +17,24 @@ from agents import (
     SQLiteSession,
 )
 from agents.stream_events import AgentUpdatedStreamEvent, RunItemStreamEvent
+from anyio import ClosedResourceError
 from mcp.shared.exceptions import McpError
 from openai.types.responses import ResponseTextDeltaEvent
 
-from .agents import build_care_agent, build_run_config, configure_openai_runtime
+from .agents import (
+    build_care_agent,
+    build_crisis_monitor_agent,
+    build_run_config,
+    configure_openai_runtime,
+    _parse_crisis_assessment,
+)
+from .alert import CrisisAlertPayload, send_crisis_alert
 from .config import Settings
 from .mcp import CareChatMCPRegistry, build_mcp_registry
 from .safety import build_guardrail_response, build_output_block_response, build_prompt_injection_response, detect_local_crisis, detect_prompt_injection
 from .schemas import CareChatContext, CareRoleHint, InputSafetyAssessment
+
+T_co = TypeVar("T_co")
 
 
 def run_sync_coro(coro: Coroutine[Any, Any, T_co]) -> T_co:
@@ -81,6 +87,8 @@ class CareChatService:
     _mcp_connected: bool = field(init=False, default=False, repr=False)
     _mcp_manager: object | None = field(init=False, default=None, repr=False)
     _active_mcp_servers: list[object] = field(init=False, default_factory=list, repr=False)
+    _crisis_monitor_agent: object | None = field(init=False, default=None, repr=False)
+    _tool_call_names: dict[str, str] = field(init=False, default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         configure_openai_runtime(self.settings)
@@ -96,6 +104,8 @@ class CareChatService:
         self._mcp_registry = build_mcp_registry(self.settings)
         if self._mcp_registry is not None:
             self._mcp_manager = self._mcp_registry.build_manager(self.settings)
+        if self.settings.care_chat_crisis_alert_enabled:
+            self._crisis_monitor_agent = build_crisis_monitor_agent(self.settings)
         self._refresh_agent()
 
     def _refresh_agent(self) -> None:
@@ -193,6 +203,7 @@ class CareChatService:
 
         local_alert = detect_local_crisis(text)
         if local_alert:
+            self._fire_keyword_crisis_alert(text, local_alert)
             return (
                 text,
                 build_guardrail_response(
@@ -202,6 +213,59 @@ class CareChatService:
             )
 
         return text, None
+
+    def _fire_keyword_crisis_alert(self, text: str, alert: object) -> None:
+        if not self.settings.care_chat_crisis_alert_enabled:
+            return
+        category = getattr(alert, "category", None)
+        if category is None:
+            return
+        payload = CrisisAlertPayload(
+            session_id=self.session_id,
+            user_message=text,
+            risk_level="critical",
+            risk_reason=f"Keyword detection: {category.value}",
+        )
+        import threading
+
+        def _send() -> None:
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(send_crisis_alert(payload, self.settings))
+            finally:
+                loop.close()
+
+        threading.Thread(target=_send, daemon=True).start()
+
+    async def _run_crisis_monitor(self, text: str) -> None:
+        if self._crisis_monitor_agent is None:
+            return
+        try:
+            result = await Runner.run(
+                self._crisis_monitor_agent,
+                text,
+                context=self._build_context(None),
+                max_turns=1,
+                run_config=build_run_config(
+                    self.settings,
+                    workflow_name="CareChat crisis monitor",
+                    tracing_disabled=True,
+                ),
+            )
+            assessment = _parse_crisis_assessment(str(result.final_output))
+            if assessment.risk_level in ("moderate", "high", "critical"):
+                payload = CrisisAlertPayload(
+                    session_id=self.session_id,
+                    user_message=text,
+                    risk_level=assessment.risk_level,
+                    risk_reason=assessment.reason,
+                )
+                await send_crisis_alert(payload, self.settings)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "Crisis monitor failed for session %s", self.session_id, exc_info=True
+            )
 
     async def _session_item_count(self) -> int:
         return len(await self.session.get_items())
@@ -350,10 +414,28 @@ class CareChatService:
         if local_response is not None:
             return local_response
 
+        self._fire_background_crisis_monitor(text)
+
         if self._should_prefer_streamed_reply():
             return run_sync_coro(self._collect_streamed_reply(text, role_hint=role_hint))
 
         return self._reply_via_runner_run_sync(text, role_hint=role_hint)
+
+    def _fire_background_crisis_monitor(self, text: str) -> None:
+        if self._crisis_monitor_agent is None:
+            return
+        import threading
+
+        message = text
+
+        def _run() -> None:
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(self._run_crisis_monitor(message))
+            finally:
+                loop.close()
+
+        threading.Thread(target=_run, daemon=True).start()
 
     @dataclass(slots=True)
     class StreamChunk:
@@ -399,9 +481,17 @@ class CareChatService:
             return "unknown_tool"
 
         if event.name == "tool_called":
-            return f"{agent_name} 调用工具: {_tool_name()}"
+            name = _tool_name()
+            call_id = _raw_attr("call_id") or _raw_attr("id")
+            if isinstance(call_id, str) and call_id:
+                self._tool_call_names[call_id] = name
+            return f"{agent_name} 调用工具: {name}"
         if event.name == "tool_output":
-            return f"{agent_name} 工具完成: {_tool_name()}"
+            call_id = _raw_attr("call_id") or _raw_attr("id")
+            name = self._tool_call_names.pop(call_id, None) if isinstance(call_id, str) else None
+            if not name:
+                name = _tool_name()
+            return f"{agent_name} 工具完成: {name}"
         if event.name == "tool_search_called":
             return f"{agent_name} 发起工具搜索"
         if event.name == "tool_search_output_created":
@@ -433,6 +523,10 @@ class CareChatService:
         if local_response is not None:
             yield self.StreamChunk(kind="text", text=local_response)
             return
+
+        _monitor_task: asyncio.Task[None] | None = None
+        if self._crisis_monitor_agent is not None:
+            _monitor_task = asyncio.create_task(self._run_crisis_monitor(text))
 
         await self._ensure_agent_ready()
         item_count_before = await self._session_item_count()

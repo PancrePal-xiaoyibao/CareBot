@@ -41,10 +41,12 @@ from .mcp import (
     VOLUNTEER_TASK_AGENT_KEY,
 )
 from .prompts import (
+    CRISIS_ALERT_TOOL_POLICY,
     caregiver_care_coordination_prompt,
     caregiver_coordinator_prompt,
     caregiver_emotional_support_prompt,
     caregiver_urgent_support_prompt,
+    crisis_monitor_prompt,
     input_guardrail_prompt,
     output_guardrail_prompt,
     patient_care_navigation_prompt,
@@ -60,10 +62,12 @@ from .prompts import (
 from .safety import detect_local_crisis
 from .schemas import (
     CareChatContext,
+    CrisisAssessment,
     InputSafetyAssessment,
     OutputSafetyAssessment,
 )
 from .tools import (
+    build_crisis_alert_tool,
     caregiver_coordination_plan,
     community_help_request,
     community_peer_referral,
@@ -280,6 +284,26 @@ def _parse_output_assessment(raw_output: str) -> OutputSafetyAssessment:
         )
 
 
+def _parse_crisis_assessment(raw_output: str) -> CrisisAssessment:
+    try:
+        payload = _extract_json_object(raw_output)
+        return CrisisAssessment.model_validate(payload)
+    except (json.JSONDecodeError, ValidationError):
+        return CrisisAssessment(
+            risk_level="none",
+            reason="Classifier output could not be parsed; defaulting to no risk.",
+        )
+
+
+def build_crisis_monitor_agent(settings: Settings) -> Agent[CareChatContext]:
+    return Agent(
+        name="Crisis Risk Monitor",
+        instructions=crisis_monitor_prompt(),
+        model=settings.guardrail_model,
+        model_settings=_build_guardrail_model_settings(settings),
+    )
+
+
 def build_care_agent(
     settings: Settings,
     *,
@@ -377,6 +401,15 @@ def build_care_agent(
         },
     }
 
+    crisis_tool = (
+        build_crisis_alert_tool(settings)
+        if settings.care_chat_crisis_alert_enabled
+        else None
+    )
+    crisis_policy_suffix = (
+        f"\n\n{CRISIS_ALERT_TOOL_POLICY}" if crisis_tool else ""
+    )
+
     def _agent_kwargs(agent_key: str) -> dict[str, Any]:
         if mcp_registry is None:
             return {}
@@ -395,8 +428,8 @@ def build_care_agent(
             "Best for patient fear, sadness, loneliness, overwhelm, grief, "
             "and emotional containment."
         ),
-        instructions=patient_emotional_support_prompt(),
-        tools=[grounding_exercise, community_peer_referral],
+        instructions=patient_emotional_support_prompt() + crisis_policy_suffix,
+        tools=[grounding_exercise, community_peer_referral] + ([crisis_tool] if crisis_tool else []),
         **shared_agent_config,
         **_agent_kwargs(PATIENT_EMOTIONAL_AGENT_KEY),
     )
@@ -418,8 +451,8 @@ def build_care_agent(
         handoff_description=(
             "Best for patient new or worsening symptoms and escalation decisions."
         ),
-        instructions=patient_urgent_support_prompt(),
-        tools=[urgent_support_playbook],
+        instructions=patient_urgent_support_prompt() + crisis_policy_suffix,
+        tools=[urgent_support_playbook] + ([crisis_tool] if crisis_tool else []),
         **shared_agent_config,
         **_agent_kwargs(PATIENT_URGENT_AGENT_KEY),
     )
@@ -431,8 +464,8 @@ def build_care_agent(
         handoff_description=(
             "Best for caregiver burnout, strain, guilt, and emotional support."
         ),
-        instructions=caregiver_emotional_support_prompt(),
-        tools=[grounding_exercise, community_peer_referral],
+        instructions=caregiver_emotional_support_prompt() + crisis_policy_suffix,
+        tools=[grounding_exercise, community_peer_referral] + ([crisis_tool] if crisis_tool else []),
         **shared_agent_config,
         **_agent_kwargs(CAREGIVER_EMOTIONAL_AGENT_KEY),
     )
@@ -460,8 +493,8 @@ def build_care_agent(
             "Best for concerning patient symptoms observed by caregiver "
             "and escalation decisions."
         ),
-        instructions=caregiver_urgent_support_prompt(),
-        tools=[urgent_support_playbook],
+        instructions=caregiver_urgent_support_prompt() + crisis_policy_suffix,
+        tools=[urgent_support_playbook] + ([crisis_tool] if crisis_tool else []),
         **shared_agent_config,
         **_agent_kwargs(CAREGIVER_URGENT_AGENT_KEY),
     )
@@ -498,8 +531,8 @@ def build_care_agent(
             "Best for concerning observations and when or how to escalate "
             "to family or medical team."
         ),
-        instructions=volunteer_escalation_guide_prompt(),
-        tools=[urgent_support_playbook],
+        instructions=volunteer_escalation_guide_prompt() + crisis_policy_suffix,
+        tools=[urgent_support_playbook] + ([crisis_tool] if crisis_tool else []),
         **shared_agent_config,
         **_agent_kwargs(VOLUNTEER_ESCALATION_AGENT_KEY),
     )

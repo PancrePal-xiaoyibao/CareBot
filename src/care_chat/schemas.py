@@ -28,3 +28,10 @@ class InputSafetyAssessment(BaseModel):
 class OutputSafetyAssessment(BaseModel):
     unsafe: bool = Field(description="Whether the assistant response is medically unsafe.")
     reason: str = Field(description="Short explanation for the decision.")
+
+
+class CrisisAssessment(BaseModel):
+    risk_level: Literal["none", "low", "moderate", "high", "critical"] = Field(
+        description="用户自伤风险等级"
+    )
+    reason: str = Field(description="风险评估的简要依据")
