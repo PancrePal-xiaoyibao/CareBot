@@ -21,6 +21,7 @@ tmp/
 .codex/
 .gemini/
 .cursor/
+.debug/
 AGENTS.md
 CLAUDE.md
 GEMINI.md
