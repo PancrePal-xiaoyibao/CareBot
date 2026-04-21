@@ -92,6 +92,11 @@ def test_safe_summary_includes_lightweight_runtime_flags(
     assert summary["tracing_disabled"] == "false"
     assert summary["tracing_export_api_key_configured"] == "yes"
     assert summary["trace_include_sensitive_data"] == "false"
+    assert summary["mcp_enabled"] == "false"
+    assert summary["mcp_config_source"] == "unset"
+    assert summary["mcp_strict"] == "false"
+    assert summary["mcp_connect_in_parallel"] == "true"
+    assert summary["mcp_convert_schemas_to_strict"] == "false"
 
 
 def test_custom_gateway_without_tracing_key_disables_official_tracing(
@@ -110,3 +115,16 @@ def test_custom_gateway_without_tracing_key_disables_official_tracing(
     assert settings.tracing_effective_disabled is True
     assert settings.build_tracing_config() is None
     assert settings.tracing_warning() is not None
+
+
+def test_mcp_config_source_prefers_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    settings = Settings(
+        _env_file=None,
+        openai_api_key="test-key",
+        care_chat_session_db_path=Path("tmp/test.sqlite3"),
+        care_chat_mcp_enabled=True,
+        care_chat_mcp_config_path=Path("config/mcp.json"),
+    )
+
+    assert settings.mcp_config_source == "path:config/mcp.json"

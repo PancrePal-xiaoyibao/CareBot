@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agents import (
     Agent,
@@ -24,6 +25,21 @@ from pydantic import ValidationError
 
 from .config import Settings
 from .kimi_compat import install_kimi_chat_compatibility, should_replay_kimi_reasoning_content
+from .mcp import (
+    CAREGIVER_COORDINATION_AGENT_KEY,
+    CAREGIVER_COORDINATOR_AGENT_KEY,
+    CAREGIVER_EMOTIONAL_AGENT_KEY,
+    CAREGIVER_URGENT_AGENT_KEY,
+    PATIENT_COORDINATOR_AGENT_KEY,
+    PATIENT_EMOTIONAL_AGENT_KEY,
+    PATIENT_NAVIGATION_AGENT_KEY,
+    PATIENT_URGENT_AGENT_KEY,
+    ROUTER_AGENT_KEY,
+    VOLUNTEER_BOUNDARY_AGENT_KEY,
+    VOLUNTEER_COORDINATOR_AGENT_KEY,
+    VOLUNTEER_ESCALATION_AGENT_KEY,
+    VOLUNTEER_TASK_AGENT_KEY,
+)
 from .prompts import (
     caregiver_care_coordination_prompt,
     caregiver_coordinator_prompt,
@@ -57,6 +73,11 @@ from .tools import (
     volunteer_support_boundaries,
 )
 
+if TYPE_CHECKING:
+    from agents.mcp import MCPServer
+
+    from .mcp import CareChatMCPRegistry
+
 
 def _is_kimi_k25(model_name: str) -> bool:
     return "kimi-k2.5" in model_name.lower()
@@ -75,6 +96,11 @@ def _kimi_must_disable_thinking_mode(settings: Settings) -> bool:
 def configure_openai_runtime(settings: Settings) -> None:
     settings.ensure_ready()
     install_kimi_chat_compatibility()
+
+    # The app already retries/rebuilds MCP runtime on recoverable transport failures.
+    # Suppress raw transport stack traces from bubbling into the CLI.
+    logging.getLogger("mcp.client.streamable_http").setLevel(logging.CRITICAL)
+    logging.getLogger("mcp.client.sse").setLevel(logging.CRITICAL)
 
     client_kwargs: dict[str, Any] = {"api_key": settings.openai_api_key}
     if settings.openai_base_url:
@@ -253,7 +279,12 @@ def _parse_output_assessment(raw_output: str) -> OutputSafetyAssessment:
         )
 
 
-def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
+def build_care_agent(
+    settings: Settings,
+    *,
+    mcp_registry: CareChatMCPRegistry | None = None,
+    active_mcp_servers: list[MCPServer] | None = None,
+) -> Agent[CareChatContext]:
     guardrail_model_settings = _build_guardrail_model_settings(settings)
 
     input_guardrails = []
@@ -340,7 +371,20 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         "model": settings.care_chat_model,
         "model_settings": _build_model_settings(settings),
         "output_guardrails": output_guardrails,
+        "mcp_config": {
+            "convert_schemas_to_strict": settings.care_chat_mcp_convert_schemas_to_strict,
+        },
     }
+
+    def _agent_kwargs(agent_key: str) -> dict[str, Any]:
+        if mcp_registry is None:
+            return {}
+        return {
+            "mcp_servers": mcp_registry.resolve_for(
+                agent_key,
+                active_mcp_servers=active_mcp_servers,
+            )
+        }
 
     # === Level 2: Patient sub-agents ===
 
@@ -353,6 +397,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=patient_emotional_support_prompt(),
         tools=[grounding_exercise],
         **shared_agent_config,
+        **_agent_kwargs(PATIENT_EMOTIONAL_AGENT_KEY),
     )
 
     patient_navigation = Agent(
@@ -364,6 +409,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=patient_care_navigation_prompt(),
         tools=[doctor_question_builder, symptom_journal_template],
         **shared_agent_config,
+        **_agent_kwargs(PATIENT_NAVIGATION_AGENT_KEY),
     )
 
     patient_urgent = Agent(
@@ -374,6 +420,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=patient_urgent_support_prompt(),
         tools=[urgent_support_playbook],
         **shared_agent_config,
+        **_agent_kwargs(PATIENT_URGENT_AGENT_KEY),
     )
 
     # === Level 2: Caregiver sub-agents ===
@@ -386,6 +433,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=caregiver_emotional_support_prompt(),
         tools=[grounding_exercise],
         **shared_agent_config,
+        **_agent_kwargs(CAREGIVER_EMOTIONAL_AGENT_KEY),
     )
 
     caregiver_coordination = Agent(
@@ -402,6 +450,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
             community_help_request,
         ],
         **shared_agent_config,
+        **_agent_kwargs(CAREGIVER_COORDINATION_AGENT_KEY),
     )
 
     caregiver_urgent = Agent(
@@ -413,6 +462,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=caregiver_urgent_support_prompt(),
         tools=[urgent_support_playbook],
         **shared_agent_config,
+        **_agent_kwargs(CAREGIVER_URGENT_AGENT_KEY),
     )
 
     # === Level 2: Volunteer sub-agents ===
@@ -426,6 +476,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=volunteer_task_guide_prompt(),
         tools=[community_help_request],
         **shared_agent_config,
+        **_agent_kwargs(VOLUNTEER_TASK_AGENT_KEY),
     )
 
     volunteer_boundary = Agent(
@@ -437,6 +488,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=volunteer_boundary_coach_prompt(),
         tools=[volunteer_support_boundaries],
         **shared_agent_config,
+        **_agent_kwargs(VOLUNTEER_BOUNDARY_AGENT_KEY),
     )
 
     volunteer_escalation = Agent(
@@ -448,6 +500,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=volunteer_escalation_guide_prompt(),
         tools=[urgent_support_playbook],
         **shared_agent_config,
+        **_agent_kwargs(VOLUNTEER_ESCALATION_AGENT_KEY),
     )
 
     # === Level 1: Coordinators ===
@@ -461,6 +514,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=patient_coordinator_prompt(),
         handoffs=[patient_emotional, patient_navigation, patient_urgent],
         **shared_agent_config,
+        **_agent_kwargs(PATIENT_COORDINATOR_AGENT_KEY),
     )
 
     caregiver_coordinator = Agent(
@@ -472,6 +526,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=caregiver_coordinator_prompt(),
         handoffs=[caregiver_emotional, caregiver_coordination, caregiver_urgent],
         **shared_agent_config,
+        **_agent_kwargs(CAREGIVER_COORDINATOR_AGENT_KEY),
     )
 
     volunteer_coordinator = Agent(
@@ -483,6 +538,7 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         instructions=volunteer_coordinator_prompt(),
         handoffs=[volunteer_task, volunteer_boundary, volunteer_escalation],
         **shared_agent_config,
+        **_agent_kwargs(VOLUNTEER_COORDINATOR_AGENT_KEY),
     )
 
     # === Level 0: Triage Router ===
@@ -503,4 +559,5 @@ def build_care_agent(settings: Settings) -> Agent[CareChatContext]:
         ],
         input_guardrails=input_guardrails,
         **role_router_config,
+        **_agent_kwargs(ROUTER_AGENT_KEY),
     )

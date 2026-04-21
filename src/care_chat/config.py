@@ -102,6 +102,38 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="CARE_CHAT_TRACE_INCLUDE_SENSITIVE_DATA",
     )
+    care_chat_mcp_enabled: bool = Field(
+        default=False,
+        validation_alias="CARE_CHAT_MCP_ENABLED",
+    )
+    care_chat_mcp_config_path: Path | None = Field(
+        default=None,
+        validation_alias="CARE_CHAT_MCP_CONFIG_PATH",
+    )
+    care_chat_mcp_config_json: str | None = Field(
+        default=None,
+        validation_alias="CARE_CHAT_MCP_CONFIG_JSON",
+    )
+    care_chat_mcp_strict: bool = Field(
+        default=False,
+        validation_alias="CARE_CHAT_MCP_STRICT",
+    )
+    care_chat_mcp_connect_timeout_seconds: float | None = Field(
+        default=10.0,
+        validation_alias="CARE_CHAT_MCP_CONNECT_TIMEOUT_SECONDS",
+    )
+    care_chat_mcp_cleanup_timeout_seconds: float | None = Field(
+        default=10.0,
+        validation_alias="CARE_CHAT_MCP_CLEANUP_TIMEOUT_SECONDS",
+    )
+    care_chat_mcp_connect_in_parallel: bool = Field(
+        default=True,
+        validation_alias="CARE_CHAT_MCP_CONNECT_IN_PARALLEL",
+    )
+    care_chat_mcp_convert_schemas_to_strict: bool = Field(
+        default=False,
+        validation_alias="CARE_CHAT_MCP_CONVERT_SCHEMAS_TO_STRICT",
+    )
     care_chat_language: str = Field(
         default="zh-CN",
         validation_alias="CARE_CHAT_LANGUAGE",
@@ -110,6 +142,13 @@ class Settings(BaseSettings):
     @field_validator("care_chat_session_history_limit", mode="before")
     @classmethod
     def _empty_limit_to_none(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
+
+    @field_validator("care_chat_mcp_config_path", "care_chat_mcp_config_json", mode="before")
+    @classmethod
+    def _empty_mcp_config_to_none(cls, value: object) -> object:
         if value == "":
             return None
         return value
@@ -168,6 +207,14 @@ class Settings(BaseSettings):
             )
         return None
 
+    @property
+    def mcp_config_source(self) -> str:
+        if self.care_chat_mcp_config_path is not None:
+            return f"path:{self.care_chat_mcp_config_path}"
+        if self.care_chat_mcp_config_json:
+            return "inline_json"
+        return "unset"
+
     def safe_summary(self) -> dict[str, str]:
         return {
             "model": self.care_chat_model,
@@ -192,6 +239,13 @@ class Settings(BaseSettings):
             ),
             "trace_include_sensitive_data": (
                 str(self.care_chat_trace_include_sensitive_data).lower()
+            ),
+            "mcp_enabled": str(self.care_chat_mcp_enabled).lower(),
+            "mcp_config_source": self.mcp_config_source,
+            "mcp_strict": str(self.care_chat_mcp_strict).lower(),
+            "mcp_connect_in_parallel": str(self.care_chat_mcp_connect_in_parallel).lower(),
+            "mcp_convert_schemas_to_strict": (
+                str(self.care_chat_mcp_convert_schemas_to_strict).lower()
             ),
             "api_key_configured": "yes" if bool(self.openai_api_key.strip()) else "no",
         }

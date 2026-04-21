@@ -8,6 +8,7 @@
 
 - `OpenAI Agents SDK` 会话编排
 - 面向 `患者 / 患者家属 / 社区志愿者` 的角色路由 Agent
+- 支持 `MCP` server 的共享挂载与 Agent 专用挂载
 - 本地 `.env` 配置加载
 - SQLite 会话记忆
 - 本地关键词兜底 + 可选 LLM guardrail
@@ -31,6 +32,7 @@ cp .env.example .env
 - 如果兼容端点使用自定义模型名，覆盖 `CARE_CHAT_MODEL`
 - 对 Kimi 兼容网关，优先使用 `CARE_CHAT_OPENAI_API=chat_completions`
 - 如果想在 CLI 里展示 Kimi 的思考流，保持 `CARE_CHAT_ENABLE_THINKING=true`
+- 如果你要启用 MCP，设置 `CARE_CHAT_MCP_ENABLED=true`，并指定 `CARE_CHAT_MCP_CONFIG_PATH`
 - 如果你要把 traces 发到 OpenAI 官方 Traces dashboard：
   - 官方 OpenAI 直连：默认可直接复用 `OPENAI_API_KEY`
   - 第三方兼容网关：额外设置 `CARE_CHAT_TRACING_API_KEY` 为官方 OpenAI API key
@@ -65,20 +67,26 @@ uv run care-chat --session-id patient-demo --stream
 uv run care-chat --session-id patient-demo --stream --show-reasoning
 ```
 
-8. 或者单轮调用
+8. 如果希望在 CLI 里看到 handoff / tool calling 日志
+
+```bash
+uv run care-chat --session-id patient-demo --stream --show-tools
+```
+
+9. 或者单轮调用
 
 ```bash
 uv run care-chat "我今天很害怕，明天要做化疗。"
 ```
 
-9. 显式指定当前对象角色
+10. 显式指定当前对象角色
 
 ```bash
 uv run care-chat --session-id family-demo --role-hint caregiver
 uv run care-chat --session-id volunteer-demo --role-hint volunteer
 ```
 
-10. 清空某个会话的历史
+11. 清空某个会话的历史
 
 ```bash
 uv run care-chat --session-id patient-demo --clear-session
@@ -105,7 +113,7 @@ uv run care-chat --session-id patient-001 "继续刚才的话题"
 
 ## 流式说明
 
-CLI 提供 `--stream`，会优先尝试 Agents SDK 的 `Runner.run_streamed()`；对 Kimi 还可以叠加 `--show-reasoning` 查看 thinking 文本。
+CLI 提供 `--stream`，会优先尝试 Agents SDK 的 `Runner.run_streamed()`；对 Kimi 还可以叠加 `--show-reasoning` 查看 thinking 文本，也可以用 `--show-tools` 查看 handoff / tool calling 事件。
 
 - 如果当前 provider 对 SDK 流式事件兼容良好，会实时输出增量文本
 - 如果当前网关对 Agents SDK 流式兼容性一般，CLI 会自动回退到普通回答，而不是直接中断
@@ -181,6 +189,37 @@ CARE_CHAT_ENABLE_ROLE_ROUTER=true
 
 如果某个入口已经知道用户角色，比如患者端、小程序家属端、志愿者工作台，可以直接传入 `role_hint`，避免路由 Agent 再猜一遍。
 
+如果你单独给 router 指定了 `CARE_CHAT_ROLE_ROUTER_MODEL`，要优先选一个 handoff/tool calling 比较稳定的模型。否则常见现象是：router 文本里说“我来转接”，但没有真的发出 handoff tool call。
+
+## MCP 集成
+
+这个项目现在支持把 MCP server 作为 `Agent(..., mcp_servers=[...])` 注入到不同层级的 Agent 里。
+
+- 共用 MCP：把一个 server 的 `targets` 写成多个角色组，例如 `["patient", "caregiver", "volunteer"]`
+- 专用 MCP：把 `targets` 写成单个 Agent key，例如 `["patient_navigation"]`
+- 如果同一个物理 MCP endpoint 需要给不同 Agent 暴露不同工具子集，直接在配置里声明成多个不同的逻辑 server，并分别设置不同的 `name`、`targets`、`allowed_tool_names`
+
+启用方式：
+
+```env
+CARE_CHAT_MCP_ENABLED=true
+CARE_CHAT_MCP_CONFIG_PATH=docs/mcp.servers.example.json
+CARE_CHAT_MCP_STRICT=false
+CARE_CHAT_MCP_CONNECT_IN_PARALLEL=true
+```
+
+示例配置文件见 [docs/mcp.servers.example.json](/Users/liueic/Documents/Code/Care-Chat/docs/mcp.servers.example.json:1)。
+
+`targets` 支持两类值：
+
+- 角色组：`all`、`patient`、`caregiver`、`volunteer`、`coordinators`、`specialists`
+- 具体 Agent：`router`、`patient_coordinator`、`patient_emotional`、`patient_navigation`、`patient_urgent`、`caregiver_coordinator`、`caregiver_emotional`、`caregiver_coordination`、`caregiver_urgent`、`volunteer_coordinator`、`volunteer_task`、`volunteer_boundary`、`volunteer_escalation`
+
+实现上有两个关键点：
+
+- service 首次运行前会统一连接 MCP server；如果 `CARE_CHAT_MCP_STRICT=false`，连接失败的 server 会被自动剔除，其他 server 继续可用
+- Agent 只会拿到“当前成功连接”的 MCP server，因此不会把失联的 server 继续暴露给模型
+
 ## 项目结构
 
 ```text
@@ -188,6 +227,7 @@ src/care_chat/
   agents.py      # Agent 组装、handoff、guardrail、OpenAI runtime 配置
   cli.py         # 命令行入口
   config.py      # .env / settings
+  mcp.py         # MCP 配置解析、shared/dedicated 挂载与 lifecycle manager
   prompts.py     # 陪伴场景提示词
   safety.py      # 本地紧急风险兜底
   service.py     # 会话与运行封装
