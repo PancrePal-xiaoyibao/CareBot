@@ -1,0 +1,323 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import warnings
+from collections.abc import AsyncIterator, Coroutine
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal, TypeVar
+
+T_co = TypeVar("T_co")
+
+from agents import (
+    flush_traces,
+    InputGuardrailTripwireTriggered,
+    OutputGuardrailTripwireTriggered,
+    Runner,
+    SQLiteSession,
+)
+from openai.types.responses import ResponseTextDeltaEvent
+
+from .agents import build_care_agent, build_run_config, configure_openai_runtime
+from .config import Settings
+from .safety import build_guardrail_response, build_output_block_response, detect_local_crisis
+from .schemas import CareChatContext, CareRoleHint, InputSafetyAssessment
+
+
+def run_sync_coro(coro: Coroutine[Any, Any, T_co]) -> T_co:
+    """Run *coro* on the thread default loop without closing it (matches ``Runner.run_sync``).
+
+    Using ``asyncio.run()`` for each reply tears down the loop while httpx/OpenAI async clients
+    may still schedule ``aclose()``, which triggers ``RuntimeError: Event loop is closed``.
+    """
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError(
+            "run_sync_coro() cannot be used while an event loop is already running; "
+            "call the async API with await instead."
+        )
+
+    policy = asyncio.get_event_loop_policy()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        try:
+            loop = policy.get_event_loop()
+        except RuntimeError:
+            loop = policy.new_event_loop()
+            policy.set_event_loop(loop)
+
+    if loop.is_closed():
+        loop = policy.new_event_loop()
+        policy.set_event_loop(loop)
+
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        if not loop.is_closed():
+            with contextlib.suppress(RuntimeError):
+                loop.run_until_complete(loop.shutdown_asyncgens())
+
+
+@dataclass(slots=True)
+class CareChatService:
+    settings: Settings
+    session_id: str
+    db_path: Path | None = None
+    session: SQLiteSession = field(init=False)
+    agent: object = field(init=False)
+
+    def __post_init__(self) -> None:
+        configure_openai_runtime(self.settings)
+
+        session_db_path = self.db_path or self.settings.care_chat_session_db_path
+        if str(session_db_path) != ":memory:":
+            session_db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self.session = SQLiteSession(
+            session_id=self.session_id,
+            db_path=session_db_path,
+        )
+        self.agent = build_care_agent(self.settings)
+
+    async def clear_session(self) -> None:
+        await self.session.clear_session()
+
+    def _prepare_message(self, message: str) -> tuple[str, str | None]:
+        text = message.strip()
+        if not text:
+            raise ValueError("Message cannot be empty.")
+
+        local_alert = detect_local_crisis(text)
+        if local_alert:
+            return (
+                text,
+                build_guardrail_response(
+                    category=local_alert.category.value,
+                    language=self.settings.care_chat_language,
+                ),
+            )
+
+        return text, None
+
+    async def _session_item_count(self) -> int:
+        return len(await self.session.get_items())
+
+    async def _rewind_session_to_count(self, item_count: int) -> None:
+        while await self._session_item_count() > item_count:
+            await self.session.pop_item()
+
+    def _resolve_role_hint(self, role_hint: CareRoleHint | None) -> CareRoleHint:
+        return role_hint or self.settings.care_chat_default_role_hint
+
+    def _build_context(self, role_hint: CareRoleHint | None) -> CareChatContext:
+        return CareChatContext(
+            role_hint=self._resolve_role_hint(role_hint),
+            session_id=self.session_id,
+        )
+
+    def _build_trace_metadata(self, role_hint: CareRoleHint | None) -> dict[str, str]:
+        return {
+            "app": "care-chat",
+            "session_id": self.session_id,
+            "role_hint": self._resolve_role_hint(role_hint),
+        }
+
+    def _flush_traces(self) -> None:
+        if self.settings.tracing_effective_disabled:
+            return
+        flush_traces()
+
+    def _reply_via_runner_run_sync(self, text: str, *, role_hint: CareRoleHint | None = None) -> str:
+        try:
+            result = Runner.run_sync(
+                self.agent,
+                text,
+                context=self._build_context(role_hint),
+                session=self.session,
+                max_turns=16,
+                run_config=build_run_config(
+                    self.settings,
+                    workflow_name="Care Chat Oncology Companion",
+                    group_id=self.session_id,
+                    trace_metadata=self._build_trace_metadata(role_hint),
+                ),
+            )
+        except InputGuardrailTripwireTriggered as exc:
+            assessment = exc.guardrail_result.output.output_info
+            if isinstance(assessment, InputSafetyAssessment):
+                return build_guardrail_response(
+                    category=assessment.category,
+                    reason=assessment.reason,
+                    language=self.settings.care_chat_language,
+                )
+            return build_guardrail_response(
+                category="medical_emergency",
+                language=self.settings.care_chat_language,
+            )
+        except OutputGuardrailTripwireTriggered:
+            return build_output_block_response(language=self.settings.care_chat_language)
+
+        final_output = str(result.final_output).strip()
+        if not final_output:
+            return build_output_block_response(language=self.settings.care_chat_language)
+
+        self._flush_traces()
+        return final_output
+
+    def _should_prefer_streamed_reply(self) -> bool:
+        return (
+            self.settings.care_chat_openai_api == "chat_completions"
+            and self.settings.care_chat_enable_thinking
+            and "kimi-k2.5" in self.settings.care_chat_model.lower()
+        )
+
+    async def _collect_streamed_reply(
+        self,
+        message: str,
+        *,
+        role_hint: CareRoleHint | None = None,
+    ) -> str:
+        chunks: list[str] = []
+        async for chunk in self.stream_reply(
+            message,
+            include_reasoning=False,
+            role_hint=role_hint,
+        ):
+            chunks.append(chunk.text)
+        final_output = "".join(chunks).strip()
+        if not final_output:
+            return build_output_block_response(language=self.settings.care_chat_language)
+        return final_output
+
+    def reply(self, message: str, *, role_hint: CareRoleHint | None = None) -> str:
+        text, local_response = self._prepare_message(message)
+        if local_response is not None:
+            return local_response
+
+        if self._should_prefer_streamed_reply():
+            return run_sync_coro(self._collect_streamed_reply(text, role_hint=role_hint))
+
+        return self._reply_via_runner_run_sync(text, role_hint=role_hint)
+
+    @dataclass(slots=True)
+    class StreamChunk:
+        kind: Literal["reasoning", "text"]
+        text: str
+
+    async def stream_reply(
+        self,
+        message: str,
+        *,
+        include_reasoning: bool = False,
+        role_hint: CareRoleHint | None = None,
+    ) -> AsyncIterator["CareChatService.StreamChunk"]:
+        text, local_response = self._prepare_message(message)
+        if local_response is not None:
+            yield self.StreamChunk(kind="text", text=local_response)
+            return
+
+        item_count_before = await self._session_item_count()
+        streamed_text = ""
+
+        try:
+            result = Runner.run_streamed(
+                self.agent,
+                text,
+                context=self._build_context(role_hint),
+                session=self.session,
+                max_turns=16,
+                run_config=build_run_config(
+                    self.settings,
+                    workflow_name="Care Chat Oncology Companion",
+                    group_id=self.session_id,
+                    trace_metadata=self._build_trace_metadata(role_hint),
+                ),
+            )
+
+            async for event in result.stream_events():
+                if event.type != "raw_response_event":
+                    continue
+
+                event_type = getattr(event.data, "type", None)
+                if include_reasoning and event_type in {
+                    "response.reasoning_text.delta",
+                    "response.reasoning_summary_text.delta",
+                }:
+                    delta = getattr(event.data, "delta", "") or ""
+                    if delta:
+                        yield self.StreamChunk(kind="reasoning", text=delta)
+                    continue
+
+                if not isinstance(event.data, ResponseTextDeltaEvent):
+                    continue
+
+                delta = event.data.delta or ""
+                if not delta:
+                    continue
+
+                streamed_text += delta
+                yield self.StreamChunk(kind="text", text=delta)
+
+            final_output = str(result.final_output or "").strip()
+            if not final_output:
+                if not streamed_text:
+                    raise RuntimeError("Streaming run finished without visible output.")
+                self._flush_traces()
+                return
+
+            if final_output.startswith(streamed_text):
+                tail = final_output[len(streamed_text) :]
+                if tail:
+                    yield self.StreamChunk(kind="text", text=tail)
+                self._flush_traces()
+                return
+
+            if not streamed_text:
+                yield self.StreamChunk(kind="text", text=final_output)
+                self._flush_traces()
+                return
+        except InputGuardrailTripwireTriggered as exc:
+            assessment = exc.guardrail_result.output.output_info
+            if isinstance(assessment, InputSafetyAssessment):
+                yield self.StreamChunk(
+                    kind="text",
+                    text=build_guardrail_response(
+                        category=assessment.category,
+                        reason=assessment.reason,
+                        language=self.settings.care_chat_language,
+                    ),
+                )
+                return
+
+            yield self.StreamChunk(
+                kind="text",
+                text=build_guardrail_response(
+                    category="medical_emergency",
+                    language=self.settings.care_chat_language,
+                ),
+            )
+            return
+        except OutputGuardrailTripwireTriggered:
+            yield self.StreamChunk(
+                kind="text",
+                text=build_output_block_response(language=self.settings.care_chat_language),
+            )
+            return
+        except Exception:
+            if streamed_text:
+                raise
+
+            await self._rewind_session_to_count(item_count_before)
+            yield self.StreamChunk(
+                kind="text",
+                text=await asyncio.to_thread(
+                    self._reply_via_runner_run_sync,
+                    text,
+                    role_hint=role_hint,
+                ),
+            )

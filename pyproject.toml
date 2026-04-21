@@ -1,0 +1,31 @@
+[project]
+name = "care-chat"
+version = "0.1.0"
+description = "Cancer-support companion agent built with the OpenAI Agents SDK"
+readme = "README.md"
+authors = [
+    { name = "Aicnal Liueic", email = "liusomes@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "openai-agents>=0.14.2",
+    "pydantic-settings>=2.13.1",
+    "python-dotenv>=1.2.2",
+    "rich>=15.0.0",
+    "socksio>=1.0.0",
+]
+
+[project.scripts]
+care-chat = "care_chat.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
