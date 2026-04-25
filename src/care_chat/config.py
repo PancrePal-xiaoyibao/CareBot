@@ -55,15 +55,15 @@ class Settings(BaseSettings):
         validation_alias="CARE_CHAT_GUARDRAIL_REASONING_EFFORT",
     )
     care_chat_temperature: float | None = Field(
-        default=0.4,
+        default=0.7,
         validation_alias="CARE_CHAT_TEMPERATURE",
     )
     care_chat_max_tokens: int | None = Field(
-        default=700,
+        default=4000,
         validation_alias="CARE_CHAT_MAX_TOKENS",
     )
     care_chat_verbosity: Verbosity = Field(
-        default="low",
+        default="high",
         validation_alias="CARE_CHAT_VERBOSITY",
     )
     care_chat_session_db_path: Path = Field(

@@ -88,6 +88,12 @@ def _is_kimi_k25(model_name: str) -> bool:
     return "kimi-k2.5" in model_name.lower()
 
 
+def _is_non_thinking_model(model_name: str) -> bool:
+    """Models that do not support thinking/reasoning mode natively."""
+    name = model_name.lower()
+    return "k2-instruct" in name or "k20905" in name or "kimi-k2.5" in name
+
+
 def _kimi_must_disable_thinking_mode(settings: Settings) -> bool:
     """Nested handoff architecture always produces multi-turn histories where the SDK
     does not reliably replay Kimi reasoning on tool messages."""
@@ -192,6 +198,11 @@ def _build_model_settings_for_model(settings: Settings, model_name: str) -> Mode
                 if thinking_on
                 else {"thinking": {"type": "disabled"}}
             )
+
+    # Non-thinking models (k20905 etc.): disable reasoning entirely
+    if _is_non_thinking_model(model_name) and not _is_kimi_k25(model_name):
+        reasoning = None
+        extra_body = None
 
     return ModelSettings(
         temperature=temperature,
