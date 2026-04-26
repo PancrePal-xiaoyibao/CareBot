@@ -14,10 +14,16 @@ dependencies = [
     "rich>=15.0.0",
     "ruff>=0.15.11",
     "socksio>=1.0.0",
+    "starlette>=0.46.0",
+    "uvicorn[standard]>=0.34.0",
+    "httpx>=0.28.0",
+    "lark-oapi>=1.5.5",
+    "python-socks>=2.4.0",
 ]
 
 [project.scripts]
 care-chat = "care_chat.cli:main"
+care-chat-gateway = "care_chat.gateway.server:main"
 
 [build-system]
 requires = ["hatchling"]

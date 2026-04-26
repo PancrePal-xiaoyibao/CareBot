@@ -17,6 +17,7 @@ DEFAULT_SESSION_DB = PROJECT_ROOT / ".local" / "care_chat_sessions.sqlite3"
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 Verbosity = Literal["low", "medium", "high"]
 OpenAIApi = Literal["responses", "chat_completions"]
+FeishuMode = Literal["websocket", "webhook"]
 
 
 class Settings(BaseSettings):
@@ -165,6 +166,52 @@ class Settings(BaseSettings):
     care_chat_crisis_alert_cooldown_minutes: int = Field(
         default=10,
         validation_alias="CARE_CHAT_CRISIS_ALERT_COOLDOWN_MINUTES",
+    )
+
+    # ── Gateway settings ─────────────────────────────────────────────
+    care_chat_gateway_host: str = Field(
+        default="0.0.0.0",
+        validation_alias="CARE_CHAT_GATEWAY_HOST",
+    )
+    care_chat_gateway_port: int = Field(
+        default=8000,
+        validation_alias="CARE_CHAT_GATEWAY_PORT",
+    )
+    care_chat_gateway_feishu_enabled: bool = Field(
+        default=False,
+        validation_alias="CARE_CHAT_GATEWAY_FEISHU_ENABLED",
+    )
+    care_chat_gateway_feishu_mode: FeishuMode = Field(
+        default="websocket",
+        validation_alias="CARE_CHAT_GATEWAY_FEISHU_MODE",
+    )
+    care_chat_gateway_feishu_app_id: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_GATEWAY_FEISHU_APP_ID",
+    )
+    care_chat_gateway_feishu_app_secret: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_GATEWAY_FEISHU_APP_SECRET",
+    )
+    care_chat_gateway_feishu_verification_token: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_GATEWAY_FEISHU_VERIFICATION_TOKEN",
+    )
+    care_chat_gateway_feishu_encrypt_key: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_GATEWAY_FEISHU_ENCRYPT_KEY",
+    )
+    care_chat_gateway_telegram_enabled: bool = Field(
+        default=False,
+        validation_alias="CARE_CHAT_GATEWAY_TELEGRAM_ENABLED",
+    )
+    care_chat_gateway_telegram_bot_token: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_GATEWAY_TELEGRAM_BOT_TOKEN",
+    )
+    care_chat_gateway_telegram_webhook_secret: str = Field(
+        default="",
+        validation_alias="CARE_CHAT_GATEWAY_TELEGRAM_WEBHOOK_SECRET",
     )
 
     @field_validator("care_chat_session_history_limit", mode="before")
